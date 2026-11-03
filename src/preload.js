@@ -78,6 +78,17 @@ contextBridge.exposeInMainWorld('api', {
 
   exportDocx: (ids) => ipcRenderer.invoke('export:docx', ids),
   taskTemplate: () => ipcRenderer.invoke('task:template'),
+
+  // 「文稿」分区
+  docsOpenDialog: () => ipcRenderer.invoke('docs:openDialog'),
+  docsOpenFolderDialog: () => ipcRenderer.invoke('docs:openFolderDialog'),
+  docsRead: (file) => ipcRenderer.invoke('docs:read', file),
+  docsWrite: (payload) => ipcRenderer.invoke('docs:write', payload),
+  docsListFolder: (dir) => ipcRenderer.invoke('docs:listFolder', dir),
+  docsState: () => ipcRenderer.invoke('docs:state'),
+  docsClearRecent: () => ipcRenderer.invoke('docs:clearRecent'),
+  docsReveal: (file) => ipcRenderer.invoke('docs:reveal', file),
+  docsExportDocx: (doc) => ipcRenderer.invoke('docs:exportDocx', doc),
   copyResumePrompt: (id) => ipcRenderer.invoke('task:copyResumePrompt', id),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   renderMarkdown,
@@ -93,4 +104,8 @@ contextBridge.exposeInMainWorld('api', {
   onExportList: (fn) => on('export-list', fn),
   onNewTask: (fn) => on('new-task', fn),
   onSelectNote: (fn) => on('select-note', fn),
+  onOpenDoc: (fn) => on('open-doc', fn),
+  onDocsOpenFile: (fn) => on('docs-open-file', fn),
+  onDocsOpenFolder: (fn) => on('docs-open-folder', fn),
+  onGotoZone: (fn) => on('goto-zone', fn),
 });

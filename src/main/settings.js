@@ -7,6 +7,8 @@ const DEFAULTS = {
   notesDir: path.join(app.getPath('documents'), 'AI Notes'),
   shortcut: 'CommandOrControl+Shift+S',
   limitHours: 5, // GPT 等服务的使用限额时长（小时），用于"任务"的恢复提醒
+  recentFiles: [], // 「文稿」分区最近打开过的 Markdown 文件
+  lastFolder: '', // 「文稿」分区上次打开的文件夹
 };
 
 function settingsPath() {

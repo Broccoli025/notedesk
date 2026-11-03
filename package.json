@@ -28,7 +28,20 @@
         "dir"
       ],
       "identity": null
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd"
+        ],
+        "name": "Markdown 文档",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
+    ]
   },
   "dependencies": {
     "docx": "^9.7.1",

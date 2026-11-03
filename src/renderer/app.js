@@ -12,6 +12,11 @@ const state = {
   settings: null,
   kind: 'note', // 当前编辑笔记的类型
   syncTimer: null, // 文档模式回写 Markdown 的防抖
+  zone: 'notes', // notes | tasks | docs 三个工作区
+  doc: null, // 当前打开的外部 Markdown 文件
+  docFiles: [], // 打开的文件夹里的 Markdown 文件
+  docFolder: '', // 打开的文件夹路径
+  recent: [], // 最近打开过的文件
   limitHours: 5,
 };
 
@@ -39,6 +44,17 @@ const el = {
   countdown: $('#countdown'),
   btnResumePrompt: $('#btn-resume-prompt'),
   formatBar: $('#format-bar'),
+  noteMeta: $('#note-meta'),
+  fileRow: $('#file-row'),
+  fPath: $('#f-path'),
+  paneNotes: $('#pane-notes'),
+  paneTasks: $('#pane-tasks'),
+  paneDocs: $('#pane-docs'),
+  navFolder: $('#nav-folder'),
+  navRecent: $('#nav-recent'),
+  folderTitle: $('#docs-folder-title'),
+  btnDelete: $('#btn-delete'),
+  btnReveal: $('#btn-reveal'),
   fmtBlock: $('#fmt-block'),
   btnToggleDone: $('#btn-toggle-done'),
   preview: $('#preview'),
@@ -56,8 +72,8 @@ async function reload({ keepSelection = true } = {}) {
   if (keepSelection && state.selectedId && !state.notes.some((n) => n.id === state.selectedId)) {
     state.selectedId = null;
   }
-  // 没有选中项时默认打开列表第一条
-  if (!state.selectedId && !state.dirty) {
+  // 没有选中项时默认打开列表第一条（文稿区不自动选，避免覆盖用户打开的文件）
+  if (!state.selectedId && !state.dirty && state.zone !== 'docs') {
     const first = filteredNotes()[0];
     if (first) state.selectedId = first.id;
   }
@@ -72,6 +88,8 @@ function filteredNotes() {
     if (state.filter.type === 'source' && n.source !== state.filter.value) return false;
     if (state.filter.type === 'tag' && !n.tags.includes(state.filter.value)) return false;
     if (state.filter.type === 'task' && !(n.kind === 'task' && n.status === state.filter.value)) return false;
+    // 「笔记」分区不混入任务，任务有自己的工作区
+    if (state.zone === 'notes' && n.kind === 'task') return false;
     if (!q) return true;
     return (
       n.title.toLowerCase().includes(q) ||
@@ -84,12 +102,29 @@ function filteredNotes() {
 }
 
 function selected() {
+  if (state.doc && state.doc.id === state.selectedId) return state.doc;
   return state.notes.find((n) => n.id === state.selectedId) || null;
+}
+
+function isExternal() {
+  const n = selected();
+  return !!(n && n.external);
 }
 
 // ---------- 渲染：侧栏 ----------
 function renderSidebar() {
-  el.countAll.textContent = state.notes.length;
+  el.paneNotes.classList.toggle('hidden', state.zone !== 'notes');
+  el.paneTasks.classList.toggle('hidden', state.zone !== 'tasks');
+  el.paneDocs.classList.toggle('hidden', state.zone !== 'docs');
+  $('#zone-notes').classList.toggle('active', state.zone === 'notes');
+  $('#zone-tasks').classList.toggle('active', state.zone === 'tasks');
+  $('#zone-docs').classList.toggle('active', state.zone === 'docs');
+  // 文稿分区没有"新建笔记/新建任务"的概念
+  $('#btn-new').classList.toggle('hidden', state.zone === 'docs');
+  $('#btn-new-task').classList.toggle('hidden', state.zone === 'docs');
+  if (state.zone === 'docs') { renderDocsPane(); return; }
+
+  el.countAll.textContent = state.notes.filter((n) => n.kind !== 'task').length;
   el.navAll.classList.toggle('active', state.filter.type === 'all');
 
   const bySource = {};
@@ -109,7 +144,7 @@ function renderSidebar() {
       label: '进行中',
       count: activeCount,
       active: state.filter.type === 'task' && state.filter.value === 'active',
-      onClick: () => setFilter('task', 'active'),
+      onClick: () => { state.zone = 'tasks'; setFilter('task', 'active'); },
     })
   );
   if (doneCount > 0) {
@@ -119,7 +154,7 @@ function renderSidebar() {
         label: '已完成',
         count: doneCount,
         active: state.filter.type === 'task' && state.filter.value === 'done',
-        onClick: () => setFilter('task', 'done'),
+        onClick: () => { state.zone = 'tasks'; setFilter('task', 'done'); },
       })
     );
   }
@@ -156,6 +191,46 @@ function renderSidebar() {
   }
 }
 
+function renderDocsPane() {
+  // 当前文件夹
+  el.navFolder.innerHTML = '';
+  if (state.docFolder) {
+    const name = state.docFolder.split('/').filter(Boolean).pop() || state.docFolder;
+    const item = navItem({
+      icon: '<span>🗂</span>',
+      label: name,
+      count: state.docFiles.length,
+      active: true,
+      onClick: () => refreshFolder(),
+    });
+    item.title = state.docFolder;
+    el.navFolder.appendChild(item);
+    const close = navItem({ icon: '<span>✕</span>', label: '关闭文件夹', count: '', active: false, onClick: closeFolder });
+    el.navFolder.appendChild(close);
+    el.folderTitle.classList.remove('hidden');
+  } else {
+    el.folderTitle.classList.add('hidden');
+  }
+
+  // 最近打开
+  el.navRecent.innerHTML = '';
+  if (state.recent.length === 0) {
+    el.navRecent.innerHTML = '<div class="pane-tip">还没有打开过文件。</div>';
+  }
+  for (const file of state.recent) {
+    const name = file.split('/').pop();
+    const item = navItem({
+      icon: '<span>📄</span>',
+      label: name,
+      count: '',
+      active: state.doc && state.doc.path === file,
+      onClick: () => openDocFile(file),
+    });
+    item.title = file;
+    el.navRecent.appendChild(item);
+  }
+}
+
 function navItem({ icon, label, count, active, onClick }) {
   const div = document.createElement('div');
   div.className = 'nav-item' + (active ? ' active' : '');
@@ -173,6 +248,7 @@ function setFilter(type, value = null) {
 
 // ---------- 渲染：列表 ----------
 function renderList() {
+  if (state.zone === 'docs') return renderDocList();
   const notes = filteredNotes();
   el.list.innerHTML = '';
   if (notes.length === 0) {
@@ -209,6 +285,31 @@ function renderList() {
       tagsEl.appendChild(chip);
     }
     item.addEventListener('click', () => selectNote(n.id));
+    el.list.appendChild(item);
+  }
+}
+
+function renderDocList() {
+  const q = state.query.trim().toLowerCase();
+  const files = state.docFiles.filter((f) => !q || f.fileName.toLowerCase().includes(q) || (f.relDir || '').toLowerCase().includes(q));
+  el.list.innerHTML = '';
+  if (!state.docFolder) {
+    el.list.innerHTML = '<div class="empty">用左侧「打开文件…」打开单个 Markdown 文件，<br/>或「打开文件夹…」把整个目录列在这里。</div>';
+    return;
+  }
+  if (files.length === 0) {
+    el.list.innerHTML = `<div class="empty">${q ? '没有匹配的文件' : '这个文件夹里没有 Markdown 文件'}</div>`;
+    return;
+  }
+  for (const f of files) {
+    const item = document.createElement('div');
+    const active = state.doc && state.doc.path === f.path;
+    item.className = 'note-item' + (active ? ' active' : '');
+    item.innerHTML = `<div class="title"></div><div class="meta"><span class="date">${formatDate(f.updated)}</span><span class="conv"></span></div>`;
+    item.querySelector('.title').textContent = f.fileName;
+    item.querySelector('.conv').textContent = f.relDir ? `📁 ${f.relDir}` : '';
+    item.title = f.path;
+    item.addEventListener('click', () => openDocFile(f.path));
     el.list.appendChild(item);
   }
 }
@@ -281,6 +382,20 @@ function renderEditor() {
   el.editorEmpty.classList.add('hidden');
   el.editor.classList.remove('hidden');
 
+  const ext = !!n.external;
+  el.noteMeta.classList.toggle('hidden', ext);
+  el.fileRow.classList.toggle('hidden', !ext);
+  el.btnDelete.classList.toggle('hidden', ext);
+  el.btnReveal.classList.toggle('hidden', ext);
+  el.title.readOnly = ext; // 外部文件的标题就是文件名，改名要在 Finder 里做
+  if (ext) {
+    const cut = n.path.lastIndexOf('/');
+    el.fPath.innerHTML = '<span class="dir"></span><span class="base"></span>';
+    el.fPath.querySelector('.dir').textContent = cut > 0 ? n.path.slice(0, cut) : '';
+    el.fPath.querySelector('.base').textContent = cut > 0 ? n.path.slice(cut) : n.path;
+    el.fPath.title = n.path;
+  }
+
   el.title.value = n.title;
   el.source.value = n.source;
   el.tags.value = n.tags.join(', ');
@@ -291,13 +406,16 @@ function renderEditor() {
   el.status_.value = n.status || 'active';
   el.resume.value = toLocalInput(n.resumeAt);
   applyKind();
+  el.btnOpenUrl.classList.toggle('hidden', ext);
   el.btnOpenUrl.disabled = !n.url;
-  el.status.textContent = `创建于 ${new Date(n.created).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+  el.status.textContent = ext
+    ? `修改于 ${new Date(n.updated).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+    : `创建于 ${new Date(n.created).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   applyMode();
 }
 
 function applyKind() {
-  const isTask = state.kind === 'task';
+  const isTask = state.kind === 'task' && !isExternal();
   el.kindNote.classList.toggle('active', !isTask);
   el.kindTask.classList.toggle('active', isTask);
   el.taskFields.classList.toggle('hidden', !isTask);
@@ -382,6 +500,23 @@ async function flushSave() {
   clearTimeout(state.saveTimer);
   if (state.syncTimer) syncFromDoc();
   if (!state.dirty || !state.selectedId) return;
+  const cur = selected();
+  if (cur && cur.external) {
+    state.dirty = false;
+    const res = await window.api.docsWrite({ path: cur.path, content: el.content.value, frontmatter: cur.frontmatter });
+    if (res.ok) {
+      cur.content = el.content.value;
+      cur.updated = res.updated;
+      el.status.textContent = `已保存 ${new Date(res.updated).toLocaleTimeString('zh-CN')}`;
+      const row = state.docFiles.find((f) => f.path === cur.path);
+      if (row) { row.updated = res.updated; renderList(); }
+    } else {
+      state.dirty = true;
+      el.status.textContent = `保存失败：${res.error}`;
+    }
+    return;
+  }
+
   const payload = {
     id: state.selectedId,
     title: el.title.value,
@@ -429,12 +564,15 @@ async function exportCurrent() {
   const n = selected();
   if (!n) return;
   if (state.dirty) await flushSave();
-  const res = await window.api.exportDocx([n.id]);
+  const res = n.external
+    ? await window.api.docsExportDocx({ title: n.title, content: el.content.value, source: 'other', tags: [], url: '' })
+    : await window.api.exportDocx([n.id]);
   if (res.ok) el.status.textContent = '已导出 Word 文档';
   else if (res.error) el.status.textContent = `导出失败：${res.error}`;
 }
 
 async function exportList() {
+  if (state.zone === 'docs') { el.status.textContent = '文稿分区请逐个导出'; return; }
   const ids = filteredNotes().map((n) => n.id);
   if (ids.length === 0) return;
   if (state.dirty) await flushSave();
@@ -488,12 +626,97 @@ function plusLimit() {
 async function deleteCurrent() {
   const n = selected();
   if (!n) return;
+  if (n.external) { el.status.textContent = '外部文件请在 Finder 里删除'; return; }
   if (!confirm(`删除「${n.title}」？文件会移到废纸篓。`)) return;
   state.dirty = false;
   clearTimeout(state.saveTimer);
   await window.api.deleteNote(n.id);
   state.selectedId = null;
   await reload();
+}
+
+// ---------- 工作区切换 ----------
+async function setZone(zone) {
+  if (state.zone === zone) return;
+  if (state.syncTimer) syncFromDoc();
+  if (state.dirty) await flushSave();
+  state.zone = zone;
+  state.query = '';
+  el.search.value = '';
+  el.search.placeholder = zone === 'docs' ? '搜索文件名…' : '搜索标题、内容、标签…';
+  if (zone === 'notes') {
+    state.filter = { type: 'all', value: null };
+    const first = filteredNotes()[0];
+    state.selectedId = first ? first.id : null;
+  } else if (zone === 'tasks') {
+    state.filter = { type: 'task', value: 'active' };
+    const first = filteredNotes()[0];
+    state.selectedId = first ? first.id : null;
+  } else {
+    state.selectedId = state.doc ? state.doc.id : null;
+  }
+  renderSidebar();
+  renderList();
+  renderEditor();
+}
+
+// ---------- 文稿：打开本机 Markdown 文件 ----------
+async function loadDocsState() {
+  const st = await window.api.docsState();
+  state.recent = st.recentFiles || [];
+  if (st.lastFolder && !state.docFolder) {
+    const res = await window.api.docsListFolder(st.lastFolder);
+    if (res.ok) { state.docFolder = res.dir; state.docFiles = res.files; }
+  }
+  if (state.zone === 'docs') { renderSidebar(); renderList(); }
+}
+
+async function openDocFile(file) {
+  if (state.syncTimer) syncFromDoc();
+  if (state.dirty) await flushSave();
+  const res = await window.api.docsRead(file);
+  if (!res.ok) { el.status.textContent = `打开失败：${res.error}`; console.error('打开失败', res.error); return; }
+  state.doc = res.doc;
+  state.selectedId = res.doc.id;
+  state.zone = 'docs';
+  state.mode = 'preview';
+  el.search.placeholder = '搜索文件名…';
+  const st = await window.api.docsState();
+  state.recent = st.recentFiles || [];
+  renderSidebar();
+  renderList();
+  renderEditor();
+}
+
+async function chooseDocFile() {
+  const file = await window.api.docsOpenDialog();
+  if (file) await openDocFile(file);
+}
+
+async function chooseDocFolder() {
+  const dir = await window.api.docsOpenFolderDialog();
+  if (!dir) return;
+  const res = await window.api.docsListFolder(dir);
+  if (!res.ok) { el.status.textContent = `读取失败：${res.error}`; return; }
+  state.docFolder = res.dir;
+  state.docFiles = res.files;
+  state.zone = 'docs';
+  el.search.placeholder = '搜索文件名…';
+  renderSidebar();
+  renderList();
+}
+
+async function refreshFolder() {
+  if (!state.docFolder) return;
+  const res = await window.api.docsListFolder(state.docFolder);
+  if (res.ok) { state.docFiles = res.files; renderSidebar(); renderList(); }
+}
+
+function closeFolder() {
+  state.docFolder = '';
+  state.docFiles = [];
+  renderSidebar();
+  renderList();
 }
 
 // ---------- 设置 ----------
@@ -536,6 +759,22 @@ modal.addEventListener('click', (e) => {
 });
 
 // ---------- 事件绑定 ----------
+$('#zone-notes').addEventListener('click', () => setZone('notes'));
+$('#zone-tasks').addEventListener('click', () => setZone('tasks'));
+$('#zone-docs').addEventListener('click', () => setZone('docs'));
+$('#docs-open-file').addEventListener('click', chooseDocFile);
+$('#docs-open-folder').addEventListener('click', chooseDocFolder);
+$('#docs-clear-recent').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  await window.api.docsClearRecent();
+  state.recent = [];
+  renderSidebar();
+});
+$('#btn-doc-reveal').addEventListener('click', () => {
+  const n = selected();
+  if (n && n.path) window.api.docsReveal(n.path);
+});
+
 el.navAll.addEventListener('click', () => setFilter('all'));
 el.search.addEventListener('input', () => {
   state.query = el.search.value;
@@ -667,6 +906,10 @@ window.api.onOpenSettings(openSettings);
 window.api.onExportCurrent(exportCurrent);
 window.api.onExportList(exportList);
 window.api.onNewTask(newTask);
+window.api.onGotoZone((zone) => setZone(zone));
+window.api.onDocsOpenFile(chooseDocFile);
+window.api.onDocsOpenFolder(chooseDocFolder);
+window.api.onOpenDoc((file) => openDocFile(file));
 window.api.onSelectNote((id) => { state.filter = { type: 'all', value: null }; selectNote(id); });
 
 // 每 30 秒刷新倒计时
@@ -684,3 +927,4 @@ window.api.getSettings().then((st) => {
 window.addEventListener('beforeunload', () => { if (state.syncTimer) syncFromDoc(); if (state.dirty) flushSave(); });
 
 reload();
+loadDocsState();

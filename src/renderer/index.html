@@ -12,15 +12,36 @@
   <div class="app">
     <!-- 侧栏 -->
     <aside class="sidebar drag">
+      <div class="zone-switch no-drag">
+        <button class="zone-btn active" id="zone-notes" title="AI 对话里摘下来的片段（⌘1）"><span class="zi">📚</span>笔记</button>
+        <button class="zone-btn" id="zone-tasks" title="被限额打断、待接续的工作（⌘2）"><span class="zi">⏳</span>任务</button>
+        <button class="zone-btn" id="zone-docs" title="本机的 Markdown 文件（⌘3）"><span class="zi">📄</span>文稿</button>
+      </div>
       <div class="sidebar-scroll no-drag">
-        <div class="section-title">笔记</div>
-        <div id="nav-all" class="nav-item active" data-filter="all"><span>📚</span><span class="label">全部</span><span class="count" id="count-all"></span></div>
-        <div class="section-title">任务</div>
-        <div id="nav-tasks"></div>
-        <div class="section-title">来源</div>
-        <div id="nav-sources"></div>
-        <div class="section-title">标签</div>
-        <div id="nav-tags"></div>
+        <div id="pane-notes">
+          <div class="section-title">全部</div>
+          <div id="nav-all" class="nav-item active"><span>📚</span><span class="label">所有笔记</span><span class="count" id="count-all"></span></div>
+          <div class="section-title">来源</div>
+          <div id="nav-sources"></div>
+          <div class="section-title">标签</div>
+          <div id="nav-tags"></div>
+        </div>
+
+        <div id="pane-tasks" class="hidden">
+          <div class="section-title">状态</div>
+          <div id="nav-tasks"></div>
+          <div class="pane-tip">被 GPT 限额打断时按 ⌘⇧T 建一条，到点提醒你继续。</div>
+        </div>
+
+        <div id="pane-docs" class="hidden">
+          <div class="section-title">打开</div>
+          <div class="nav-item" id="docs-open-file"><span>📂</span><span class="label">打开文件…</span></div>
+          <div class="nav-item" id="docs-open-folder"><span>🗂</span><span class="label">打开文件夹…</span></div>
+          <div class="section-title" id="docs-folder-title">文件夹</div>
+          <div id="nav-folder"></div>
+          <div class="section-title">最近打开 <button class="link-btn" id="docs-clear-recent">清空</button></div>
+          <div id="nav-recent"></div>
+        </div>
       </div>
       <div class="sidebar-footer">
         <button class="btn small block" id="btn-capture" title="从剪贴板快速收藏（⌘⇧S）">⚡ 快速收藏</button>
@@ -41,8 +62,9 @@
     <!-- 编辑区 -->
     <section class="editor-pane">
       <div id="editor-empty" class="empty drag" style="padding-top: 200px;">
-        选择左侧一条笔记，或按 <kbd>⌘N</kbd> 新建<br />
-        在浏览器复制内容后按 <kbd>⌘⇧S</kbd> 可一键收藏
+        左侧选一条打开，或：<br /><br />
+        <kbd>⌘⇧S</kbd> 从剪贴板收藏　<kbd>⌘N</kbd> 新建笔记<br />
+        <kbd>⌘⇧T</kbd> 新建任务　<kbd>⌘O</kbd> 打开本机 Markdown 文件
       </div>
       <div id="editor" class="hidden" style="display: flex; flex-direction: column; height: 100%;">
         <div class="editor-toolbar drag">
@@ -61,6 +83,12 @@
         </div>
         <div class="meta-form">
           <input id="f-title" class="title-input" placeholder="标题" />
+          <div class="meta-row file-row hidden" id="file-row">
+            <label>文件</label>
+            <span class="file-path" id="f-path"></span>
+            <button class="btn small" id="btn-doc-reveal" title="在 Finder 中显示">📁 显示</button>
+          </div>
+          <div id="note-meta">
           <div class="meta-row">
             <label>来源</label>
             <select id="f-source" class="field">
@@ -96,6 +124,7 @@
             <input id="f-conversation" class="field grow" placeholder="来自哪次对话（可选）" />
             <label style="width:auto">链接</label>
             <input id="f-url" class="field grow" placeholder="https://…（可选）" />
+          </div>
           </div>
         </div>
         <div class="format-bar" id="format-bar">

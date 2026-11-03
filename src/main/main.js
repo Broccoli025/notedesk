@@ -16,6 +16,7 @@ const settings = require('./settings');
 const { NoteStore, TASK_TEMPLATE } = require('./store');
 const { getFrontContext } = require('./browser');
 const { notesToDocx } = require('./docx-export');
+const docs = require('./files');
 
 let mainWindow = null;
 let captureWindow = null;
@@ -23,6 +24,7 @@ let store = null;
 let watcher = null;
 let currentSettings = settings.load();
 const reminderTimers = new Map(); // 任务 id -> setTimeout 句柄
+let pendingOpenFile = null; // 应用还没就绪时，Finder 传来的待打开文件
 
 const PRELOAD = path.join(__dirname, '..', 'preload.js');
 const RENDERER = path.join(__dirname, '..', 'renderer');
@@ -46,6 +48,12 @@ function createMainWindow() {
     },
   });
   mainWindow.loadFile(path.join(RENDERER, 'index.html'));
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingOpenFile) {
+      mainWindow.webContents.send('open-doc', pendingOpenFile);
+      pendingOpenFile = null;
+    }
+  });
   mainWindow.on('closed', () => (mainWindow = null));
   mainWindow.on('focus', () => mainWindow.webContents.send('notes-changed'));
 }
@@ -280,6 +288,87 @@ function registerIpc() {
     }
   });
 
+  // ---------- 「文稿」分区：本机 Markdown 文件 ----------
+  ipcMain.handle('docs:openDialog', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: '打开 Markdown 文件',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Markdown', extensions: docs.MD_EXT }],
+    });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    for (const f of res.filePaths) rememberRecent(f);
+    return res.filePaths[0];
+  });
+
+  ipcMain.handle('docs:openFolderDialog', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: '打开文件夹',
+      defaultPath: currentSettings.lastFolder || app.getPath('documents'),
+      properties: ['openDirectory'],
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    currentSettings = settings.save({ lastFolder: res.filePaths[0] });
+    return res.filePaths[0];
+  });
+
+  ipcMain.handle('docs:read', (_e, file) => {
+    try {
+      const doc = docs.readDoc(file);
+      rememberRecent(file);
+      return { ok: true, doc };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('docs:write', (_e, { path: file, content, frontmatter }) => {
+    try {
+      return { ok: true, updated: docs.writeDoc(file, content, frontmatter) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('docs:listFolder', (_e, dir) => {
+    try {
+      return { ok: true, dir, files: docs.listFolder(dir) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('docs:state', () => {
+    const recent = docs.pruneRecent(currentSettings.recentFiles);
+    if (recent.length !== (currentSettings.recentFiles || []).length) {
+      currentSettings = settings.save({ recentFiles: recent });
+    }
+    return { recentFiles: recent, lastFolder: currentSettings.lastFolder };
+  });
+
+  ipcMain.handle('docs:clearRecent', () => {
+    currentSettings = settings.save({ recentFiles: [] });
+    return true;
+  });
+
+  ipcMain.handle('docs:reveal', (_e, file) => shell.showItemInFolder(file));
+
+  // 把外部文件也能导出成 Word
+  ipcMain.handle('docs:exportDocx', async (_e, doc) => {
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: '导出为 Word 文档',
+      defaultPath: path.join(app.getPath('downloads'), `${safeFileName(doc.title)}.docx`),
+      filters: [{ name: 'Word 文档', extensions: ['docx'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+    try {
+      fs.writeFileSync(res.filePath, await notesToDocx([doc], { includeMeta: false }));
+      shell.showItemInFolder(res.filePath);
+      return { ok: true, path: res.filePath, count: 1 };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('task:template', () => TASK_TEMPLATE);
   ipcMain.handle('task:copyResumePrompt', (_e, id) => {
     const n = store.list().find((x) => x.id === id);
@@ -320,6 +409,22 @@ function registerIpc() {
   );
 }
 
+function rememberRecent(file) {
+  currentSettings = settings.save({ recentFiles: docs.pushRecent(currentSettings.recentFiles, file) });
+}
+
+// Finder 双击 .md、或命令行带文件参数时走这里
+function openExternalDoc(file) {
+  if (!file || !docs.isMarkdown(file)) return;
+  rememberRecent(file);
+  if (mainWindow) {
+    showMainWindow();
+    mainWindow.webContents.send('open-doc', file);
+  } else {
+    pendingOpenFile = file;
+  }
+}
+
 function safeFileName(name) {
   return String(name || '未命名').replace(/[\\/:*?"<>|\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || '未命名';
 }
@@ -347,6 +452,9 @@ function buildMenu() {
         { label: '新建笔记', accelerator: 'Cmd+N', click: () => { showMainWindow(); mainWindow.webContents.send('new-note'); } },
         { label: '新建任务记录（限额中断时用）', accelerator: 'Cmd+Shift+T', click: () => { showMainWindow(); mainWindow.webContents.send('new-task'); } },
         { label: '快速收藏（从剪贴板）', accelerator: 'Cmd+Shift+N', click: () => openCaptureWindow() },
+        { type: 'separator' },
+        { label: '打开 Markdown 文件…', accelerator: 'Cmd+O', click: () => { showMainWindow(); mainWindow.webContents.send('docs-open-file'); } },
+        { label: '打开文件夹…', accelerator: 'Cmd+Shift+O', click: () => { showMainWindow(); mainWindow.webContents.send('docs-open-folder'); } },
         { type: 'separator' },
         { label: '导出当前笔记为 Word…', accelerator: 'Cmd+Shift+E', click: () => mainWindow && mainWindow.webContents.send('export-current') },
         { label: '导出当前列表为 Word…', click: () => mainWindow && mainWindow.webContents.send('export-list') },
@@ -380,6 +488,14 @@ function buildMenu() {
         { role: 'togglefullscreen', label: '全屏' },
       ],
     },
+    {
+      label: '前往',
+      submenu: [
+        { label: '笔记', accelerator: 'Cmd+1', click: () => mainWindow && mainWindow.webContents.send('goto-zone', 'notes') },
+        { label: '任务', accelerator: 'Cmd+2', click: () => mainWindow && mainWindow.webContents.send('goto-zone', 'tasks') },
+        { label: '文稿', accelerator: 'Cmd+3', click: () => mainWindow && mainWindow.webContents.send('goto-zone', 'docs') },
+      ],
+    },
     { label: '窗口', role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -400,6 +516,8 @@ app.whenReady().then(() => {
   if (!registerShortcut(currentSettings.shortcut)) {
     console.error('全局快捷键注册失败:', currentSettings.shortcut);
   }
+  const argFile = process.argv.slice(1).find((a) => !a.startsWith('-') && docs.isMarkdown(a));
+  if (argFile) openExternalDoc(argFile);
   if (process.env.AI_NOTES_SCREENSHOT) devScreenshots(process.env.AI_NOTES_SCREENSHOT);
 });
 
@@ -414,6 +532,12 @@ async function devScreenshots(outDir) {
   fs.writeFileSync(path.join(outDir, 'capture.png'), (await captureWindow.webContents.capturePage()).toPNG());
   app.quit();
 }
+
+// macOS：从 Finder 用本应用打开 .md
+app.on('open-file', (event, file) => {
+  event.preventDefault();
+  openExternalDoc(file);
+});
 
 app.on('activate', () => showMainWindow());
 
