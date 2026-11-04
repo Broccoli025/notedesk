@@ -36,7 +36,7 @@ function createMainWindow() {
     height: 760,
     minWidth: 820,
     minHeight: 520,
-    title: 'AI Notes',
+    title: 'Notedesk',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#f5f5f7',
@@ -67,8 +67,8 @@ function showMainWindow() {
 async function openCaptureWindow() {
   // 在把焦点抢过来之前，先读前台应用（Claude / ChatGPT / 浏览器）信息和剪贴板
   let ctx = await getFrontContext();
-  // 从本应用自己的窗口触发时，前台就是 AI Notes，没有可读的上下文
-  if (ctx.app && (ctx.app === app.name || ctx.app === 'Electron' || ctx.app === 'AI Notes')) {
+  // 从本应用自己的窗口触发时，前台就是本应用，没有可读的上下文
+  if (ctx.app && (ctx.app === app.name || ctx.app === 'Electron' || ctx.app === 'Notedesk' || ctx.app === 'AI Notes')) {
     ctx = { app: '', source: '', url: '', conversation: '', needsAccessibility: false };
   }
   const raw = clipboard.readText();
@@ -205,7 +205,7 @@ function buildResumePrompt(n) {
 function ensureWelcomeNote() {
   if (store.list().length > 0) return;
   store.save({
-    title: '欢迎使用 AI Notes',
+    title: '欢迎使用 Notedesk',
     source: 'claude',
     tags: ['使用说明'],
     url: '',
@@ -217,7 +217,9 @@ function ensureWelcomeNote() {
       '1. 在 Claude 或 ChatGPT 应用里选中一段回答，按 **⌘C** 复制，然后按全局快捷键 **⌘⇧S**，会弹出「快速收藏」窗口。',
       '2. 窗口里会自动填好内容、来源（按前台应用识别 Claude / GPT）和对话标题，你补个标题、加几个标签，按 **⌘↩** 保存。',
       '3. 如果是在浏览器里用网页版，还会自动带上对话链接。桌面版没有公开链接，可以在应用里「分享 → 复制链接」后手动粘到「链接」栏。',
-      '4. 所有笔记都以 Markdown 文件保存在 `~/Documents/AI Notes`，可以用 Obsidian、Typora 等任何工具打开；按 **⌘⇧E** 可导出为 Word。',
+      '4. 所有笔记都以 Markdown 文件保存在设置里指定的文件夹，可以用 Obsidian、Typora 等任何工具打开；按 **⌘⇧E** 可导出为 Word。',
+      '',
+      '左侧顶部有三个工作区：**笔记**放从对话里摘下来的片段，**任务**放被限额打断、等着接着做的工作，**文稿**用来直接打开本机的 Markdown 文件。',
       '',
       '## 被限额打断了怎么办',
       '',
@@ -231,7 +233,7 @@ function ensureWelcomeNote() {
       '    return f"Hello, {name}!"',
       '```',
       '',
-      '> 提示：自动读取对话标题需要在「系统设置 → 隐私与安全性 → 辅助功能」里允许 AI Notes；读取浏览器链接则需要允许「自动化」。第一次用时系统会弹窗询问，拒绝也不影响其他功能。',
+      '> 提示：自动读取对话标题需要在「系统设置 → 隐私与安全性 → 辅助功能」里允许 Notedesk；读取浏览器链接则需要允许「自动化」。第一次用时系统会弹窗询问，拒绝也不影响其他功能。',
     ].join('\n'),
   });
 }
@@ -382,7 +384,7 @@ function registerIpc() {
     const all = store.list();
     const notes = ids.map((id) => all.find((n) => n.id === id)).filter(Boolean);
     if (notes.length === 0) return { ok: false, error: '没有可导出的笔记' };
-    const defaultName = notes.length === 1 ? `${safeFileName(notes[0].title)}.docx` : `AI Notes 导出 ${new Date().toISOString().slice(0, 10)}.docx`;
+    const defaultName = notes.length === 1 ? `${safeFileName(notes[0].title)}.docx` : `Notedesk 导出 ${new Date().toISOString().slice(0, 10)}.docx`;
     const res = await dialog.showSaveDialog(mainWindow, {
       title: '导出为 Word 文档',
       defaultPath: path.join(app.getPath('downloads'), defaultName),
@@ -435,7 +437,7 @@ function buildMenu() {
     {
       label: app.name,
       submenu: [
-        { role: 'about', label: '关于 AI Notes' },
+        { role: 'about', label: '关于 Notedesk' },
         { type: 'separator' },
         { label: '设置…', accelerator: 'Cmd+,', click: () => mainWindow && mainWindow.webContents.send('open-settings') },
         { type: 'separator' },
@@ -443,7 +445,7 @@ function buildMenu() {
         { role: 'hideOthers', label: '隐藏其他' },
         { role: 'unhide', label: '全部显示' },
         { type: 'separator' },
-        { role: 'quit', label: '退出 AI Notes' },
+        { role: 'quit', label: '退出 Notedesk' },
       ],
     },
     {

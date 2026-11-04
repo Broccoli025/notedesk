@@ -64,8 +64,8 @@ async function notesToDocx(notes, { includeMeta = true } = {}) {
   children.push(new Paragraph({ text: '' }));
 
   const doc = new Document({
-    creator: 'AI Notes',
-    title: notes.length === 1 ? notes[0].title : 'AI Notes 导出',
+    creator: 'Notedesk',
+    title: notes.length === 1 ? notes[0].title : 'Notedesk 导出',
     styles: {
       default: {
         document: {

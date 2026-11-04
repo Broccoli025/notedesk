@@ -1,8 +1,8 @@
 {
-  "name": "ai-notes",
-  "productName": "AI Notes",
+  "name": "notedesk",
+  "productName": "Notedesk",
   "version": "1.0.0",
-  "description": "记录 AI 对话中有用内容的本地笔记工具",
+  "description": "笔记台 —— 收集 AI 对话里有用的内容，接续被限额打断的工作，读写本机 Markdown",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
@@ -11,8 +11,8 @@
     "dist:dmg": "electron-builder --mac dmg"
   },
   "build": {
-    "appId": "com.local.ainotes",
-    "productName": "AI Notes",
+    "appId": "com.local.notedesk",
+    "productName": "Notedesk",
     "directories": {
       "output": "release"
     },
