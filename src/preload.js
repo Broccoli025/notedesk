@@ -17,11 +17,32 @@ renderer.code = ({ text, lang }) => {
   const label = language ? `<span class="code-lang">${language}</span>` : '';
   return `<div class="code-block">${label}<pre><code${cls}>${highlighted}</code></pre></div>`;
 };
+// ==文字== 高亮。这是 Obsidian 等工具通用的写法，存进 .md 后别处也认得。
+marked.use({
+  extensions: [
+    {
+      name: 'ndHighlight',
+      level: 'inline',
+      start(src) {
+        return src.indexOf('==');
+      },
+      tokenizer(src) {
+        const m = /^==(?!=)([\s\S]+?)==/.exec(src);
+        if (m) return { type: 'ndHighlight', raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+        return undefined;
+      },
+      renderer(token) {
+        return `<mark>${this.parser.parseInline(token.tokens)}</mark>`;
+      },
+    },
+  ],
+});
+
 marked.setOptions({ renderer, gfm: true, breaks: true });
 
 function renderMarkdown(text) {
   const html = marked.parse(String(text || ''));
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
+  return DOMPurify.sanitize(html, { ADD_TAGS: ['mark'], ADD_ATTR: ['target', 'data-note', 'data-color'] });
 }
 
 // 富文本编辑区改回 Markdown
@@ -42,6 +63,25 @@ turndown.addRule('highlight', { filter: (n) => n.nodeName === 'SPAN' && n.style 
 turndown.addRule('codeLangLabel', { filter: (n) => n.nodeName === 'SPAN' && n.classList.contains('code-lang'), replacement: () => '' });
 // 删除线
 turndown.addRule('strikethrough', { filter: ['del', 's', 'strike'], replacement: (content) => '~~' + content + '~~' });
+// 高亮与批注。没有颜色也没有批注时写成通用的 ==文字==；
+// 需要保留颜色或批注时写成 <mark>，Markdown 允许行内 HTML，别的阅读器会降级成普通高亮。
+turndown.addRule('ndHighlight', {
+  filter: (n) => n.nodeName === 'MARK',
+  replacement: (content, node) => {
+    if (!content.trim()) return content;
+    const color = node.getAttribute('data-color') || '';
+    const note = node.getAttribute('data-note') || '';
+    if (!color && !note) return '==' + content + '==';
+    const attrs = [];
+    if (color) attrs.push(`data-color="${escapeAttr(color)}"`);
+    if (note) attrs.push(`data-note="${escapeAttr(note)}"`);
+    return `<mark ${attrs.join(' ')}>${content}</mark>`;
+  },
+});
+
+function escapeAttr(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r?\n/g, '&#10;');
+}
 
 function htmlToMarkdown(html) {
   return turndown
@@ -108,4 +148,5 @@ contextBridge.exposeInMainWorld('api', {
   onDocsOpenFile: (fn) => on('docs-open-file', fn),
   onDocsOpenFolder: (fn) => on('docs-open-folder', fn),
   onGotoZone: (fn) => on('goto-zone', fn),
+  onTogglePane: (fn) => on('toggle-pane', fn),
 });

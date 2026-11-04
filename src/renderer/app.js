@@ -17,6 +17,8 @@ const state = {
   docFiles: [], // 打开的文件夹里的 Markdown 文件
   docFolder: '', // 打开的文件夹路径
   recent: [], // 最近打开过的文件
+  panes: { sidebar: false, list: false }, // 左栏 / 中栏是否折叠
+  noteTarget: null, // 正在编辑批注的 <mark> 元素
   limitHours: 5,
 };
 
@@ -463,6 +465,8 @@ function renderDocView() {
   el.preview.innerHTML = window.api.renderMarkdown(el.content.value);
   el.preview.setAttribute('contenteditable', 'true');
   el.preview.spellcheck = false;
+  // 悬停就能看到批注内容
+  el.preview.querySelectorAll('mark[data-note]').forEach((m) => { m.title = m.getAttribute('data-note'); });
 }
 
 // 文档区内容回写成 Markdown
@@ -635,6 +639,202 @@ async function deleteCurrent() {
   await reload();
 }
 
+// ---------- 左栏 / 中栏折叠 ----------
+const PANES_KEY = 'notedesk.panes';
+
+function loadPanes() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PANES_KEY) || '{}');
+    return { sidebar: !!v.sidebar, list: !!v.list };
+  } catch {
+    return { sidebar: false, list: false }; // 读不到就用默认，不影响使用
+  }
+}
+
+function applyPanes() {
+  const app = document.querySelector('.app');
+  app.classList.toggle('hide-sidebar', state.panes.sidebar);
+  app.classList.toggle('hide-list', state.panes.list);
+  $('#toggle-sidebar').classList.toggle('on', !state.panes.sidebar);
+  $('#toggle-list').classList.toggle('on', !state.panes.list);
+}
+
+function togglePane(which) {
+  state.panes[which] = !state.panes[which];
+  try { localStorage.setItem(PANES_KEY, JSON.stringify(state.panes)); } catch { /* 无痕模式等场景忽略 */ }
+  applyPanes();
+}
+
+// ---------- 高亮与批注 ----------
+
+function currentRange() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const r = sel.getRangeAt(0);
+  return el.preview.contains(r.commonAncestorContainer) ? r : null;
+}
+
+// 光标所在的 mark（没有选中文字时用）
+function markAtCaret() {
+  const r = currentRange();
+  if (!r) return null;
+  let n = r.commonAncestorContainer;
+  if (n.nodeType === 3) n = n.parentNode;
+  return n && n.closest ? n.closest('mark') : null;
+}
+
+/**
+ * 把选区包进 <mark>，返回新建或命中的 mark 列表。
+ * 不走 execCommand：Chromium 会把 <mark> 改写成带内联样式的 <span>，
+ * 回写 Markdown 时又会被当成无意义的 span 剥掉。这里直接改 DOM。
+ * 跨段落的选区按文本节点逐段加高亮，而不是硬套一个 mark。
+ */
+function wrapRangeInMarks(range, color) {
+  const walker = document.createTreeWalker(el.preview, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (range.intersectsNode(n) && n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  // 先把切分位置全部算好，再动 DOM，免得改一处让后面的偏移失效
+  const jobs = nodes
+    .map((node) => ({
+      node,
+      start: node === range.startContainer ? range.startOffset : 0,
+      end: node === range.endContainer ? range.endOffset : node.nodeValue.length,
+    }))
+    .filter((j) => j.start < j.end);
+
+  const marks = [];
+  for (const { node, start, end } of jobs) {
+    const parentMark = node.parentNode && node.parentNode.closest ? node.parentNode.closest('mark') : null;
+    if (parentMark) {
+      // 已经是高亮，只换颜色
+      if (color && color !== 'yellow') parentMark.setAttribute('data-color', color);
+      else parentMark.removeAttribute('data-color');
+      marks.push(parentMark);
+      continue;
+    }
+    let target = node;
+    if (start > 0) target = target.splitText(start);
+    if (end - start < target.nodeValue.length) target.splitText(end - start);
+    const mark = document.createElement('mark');
+    if (color && color !== 'yellow') mark.setAttribute('data-color', color);
+    target.parentNode.insertBefore(mark, target);
+    mark.appendChild(target);
+    marks.push(mark);
+  }
+  return marks;
+}
+
+/**
+ * 合并紧挨着的同色同批注 mark。
+ * 段落里原本就有高亮时，选区会被切成好几个文本节点，不合并的话
+ * Markdown 里会留下一串零碎的 <mark>，看着乱也不好再编辑。
+ */
+function mergeAdjacentMarks(root) {
+  for (const m of [...root.querySelectorAll('mark')]) {
+    if (!m.isConnected) continue;
+    for (;;) {
+      let gap = null;
+      let next = m.nextSibling;
+      // 两个 mark 之间只隔着空白时，把空白一并并进来
+      if (next && next.nodeType === 3 && !next.nodeValue.trim()) { gap = next; next = next.nextSibling; }
+      if (!next || next.nodeName !== 'MARK') break;
+      if (next.getAttribute('data-color') !== m.getAttribute('data-color')) break;
+      if (next.getAttribute('data-note') !== m.getAttribute('data-note')) break;
+      if (gap) m.appendChild(gap);
+      while (next.firstChild) m.appendChild(next.firstChild);
+      next.remove();
+    }
+  }
+  root.normalize();
+}
+
+/** 对当前选区或光标所在高亮应用颜色，返回涉及的 mark 列表 */
+function markCurrentSelection(color) {
+  const r = currentRange();
+  if (!r || r.collapsed) {
+    const existing = markAtCaret();
+    if (!existing) return [];
+    if (color && color !== 'yellow') existing.setAttribute('data-color', color);
+    else existing.removeAttribute('data-color');
+    return [existing];
+  }
+  const marks = wrapRangeInMarks(r, color);
+  mergeAdjacentMarks(el.preview);
+  const alive = marks.filter((m) => m.isConnected);
+  if (alive.length) {
+    // 高亮完把选区落在最后一段上，方便接着加批注
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const nr = document.createRange();
+    nr.selectNodeContents(alive[alive.length - 1]);
+    sel.addRange(nr);
+  }
+  return alive;
+}
+
+function applyHighlight(color) {
+  if (state.mode !== 'preview') { el.status.textContent = '请切到「文档」标签页再高亮'; return; }
+  const marks = markCurrentSelection(color);
+  if (marks.length === 0) { el.status.textContent = '请先选中要高亮的文字'; return; }
+  syncFromDoc();
+}
+
+function clearHighlight() {
+  const r = currentRange();
+  if (!r) { el.status.textContent = '请先把光标放到文档里'; return; }
+  const marks = [...el.preview.querySelectorAll('mark')].filter((m) => (r.collapsed ? m.contains(r.commonAncestorContainer) : r.intersectsNode(m)));
+  if (marks.length === 0) { el.status.textContent = '这里没有高亮'; return; }
+  marks.forEach((m) => m.replaceWith(...m.childNodes));
+  mergeAdjacentMarks(el.preview);
+  syncFromDoc();
+}
+
+const noteModal = $('#note-modal');
+
+function openNoteEditor(mark) {
+  state.noteTarget = mark;
+  $('#note-quote').textContent = mark.textContent;
+  $('#note-text').value = mark.getAttribute('data-note') || '';
+  $('#note-modal-title').textContent = mark.hasAttribute('data-note') ? '编辑批注' : '添加批注';
+  $('#note-delete').classList.toggle('hidden', !mark.hasAttribute('data-note'));
+  noteModal.classList.remove('hidden');
+  $('#note-text').focus();
+}
+
+function startNote() {
+  if (state.mode !== 'preview') { el.status.textContent = '请切到「文档」标签页再批注'; return; }
+  const marks = markCurrentSelection('yellow');
+  if (marks.length === 0) { el.status.textContent = '请先选中要批注的文字'; return; }
+  if (marks.length > 1) el.status.textContent = '选区跨了多段，批注加在第一段上';
+  openNoteEditor(marks[0]);
+}
+
+function closeNoteEditor() {
+  noteModal.classList.add('hidden');
+  state.noteTarget = null;
+}
+
+function saveNote() {
+  const mark = state.noteTarget;
+  if (!mark) return closeNoteEditor();
+  const text = $('#note-text').value.trim();
+  if (text) mark.setAttribute('data-note', text);
+  else mark.removeAttribute('data-note');
+  mark.title = text;
+  closeNoteEditor();
+  syncFromDoc();
+}
+
+function deleteNote() {
+  const mark = state.noteTarget;
+  if (mark) { mark.removeAttribute('data-note'); mark.removeAttribute('title'); }
+  closeNoteEditor();
+  syncFromDoc();
+}
+
 // ---------- 工作区切换 ----------
 async function setZone(zone) {
   if (state.zone === zone) return;
@@ -759,6 +959,32 @@ modal.addEventListener('click', (e) => {
 });
 
 // ---------- 事件绑定 ----------
+$('#toggle-sidebar').addEventListener('click', () => togglePane('sidebar'));
+$('#toggle-list').addEventListener('click', () => togglePane('list'));
+
+for (const dot of document.querySelectorAll('.hl-dot')) {
+  dot.addEventListener('mousedown', (e) => e.preventDefault()); // 保住文档里的选区
+  dot.addEventListener('click', () => applyHighlight(dot.dataset.color));
+}
+$('#fmt-note').addEventListener('mousedown', (e) => e.preventDefault());
+$('#fmt-note').addEventListener('click', startNote);
+$('#fmt-hl-clear').addEventListener('mousedown', (e) => e.preventDefault());
+$('#fmt-hl-clear').addEventListener('click', clearHighlight);
+
+$('#note-save').addEventListener('click', saveNote);
+$('#note-cancel').addEventListener('click', closeNoteEditor);
+$('#note-delete').addEventListener('click', deleteNote);
+noteModal.addEventListener('click', (e) => { if (e.target === noteModal) closeNoteEditor(); });
+$('#note-text').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); saveNote(); }
+});
+
+// 双击带批注的高亮，直接打开批注
+el.preview.addEventListener('dblclick', (e) => {
+  const mark = e.target.closest && e.target.closest('mark');
+  if (mark && mark.hasAttribute('data-note')) { e.preventDefault(); openNoteEditor(mark); }
+});
+
 $('#zone-notes').addEventListener('click', () => setZone('notes'));
 $('#zone-tasks').addEventListener('click', () => setZone('tasks'));
 $('#zone-docs').addEventListener('click', () => setZone('docs'));
@@ -892,7 +1118,8 @@ $('#fmt-hr').addEventListener('click', () => exec('insertHTML', '<hr>'));
 // ⌘N / ⌘F / ⌘E / ⌘, / ⌘⇧E 由应用菜单的快捷键统一处理，这里只处理 Esc
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!modal.classList.contains('hidden')) closeSettings();
+    if (!noteModal.classList.contains('hidden')) closeNoteEditor();
+    else if (!modal.classList.contains('hidden')) closeSettings();
     else if (document.activeElement === el.search) { el.search.value = ''; state.query = ''; renderList(); el.search.blur(); }
     else if (state.mode === 'edit') { flushSave(); setMode('preview'); }
   }
@@ -907,6 +1134,7 @@ window.api.onExportCurrent(exportCurrent);
 window.api.onExportList(exportList);
 window.api.onNewTask(newTask);
 window.api.onGotoZone((zone) => setZone(zone));
+window.api.onTogglePane((which) => togglePane(which));
 window.api.onDocsOpenFile(chooseDocFile);
 window.api.onDocsOpenFolder(chooseDocFolder);
 window.api.onOpenDoc((file) => openDocFile(file));
@@ -926,5 +1154,7 @@ window.api.getSettings().then((st) => {
 });
 window.addEventListener('beforeunload', () => { if (state.syncTimer) syncFromDoc(); if (state.dirty) flushSave(); });
 
+state.panes = loadPanes();
+applyPanes();
 reload();
 loadDocsState();

@@ -68,6 +68,10 @@
       </div>
       <div id="editor" class="hidden" style="display: flex; flex-direction: column; height: 100%;">
         <div class="editor-toolbar drag">
+          <div class="pane-toggles no-drag">
+            <button class="fmt-btn" id="toggle-sidebar" title="显示/隐藏左栏（⌘⌥1）">▥</button>
+            <button class="fmt-btn" id="toggle-list" title="显示/隐藏中间列表（⌘⌥2）">▤</button>
+          </div>
           <div class="segmented no-drag">
             <button id="mode-edit" title="编辑 Markdown 源码">Markdown</button>
             <button id="mode-preview" class="active" title="像 Word 一样直接在排版后的文档上编辑">文档</button>
@@ -150,8 +154,19 @@
           <button class="fmt-btn" id="fmt-link" title="插入链接">🔗</button>
           <button class="fmt-btn" id="fmt-hr" title="分隔线">—</button>
           <button class="fmt-btn" data-cmd="removeFormat" title="清除格式">✕ 格式</button>
+          <span class="fmt-sep"></span>
+          <span class="hl-swatches" id="hl-swatches">
+            <button class="hl-dot" data-color="yellow" style="background:#ffe066" title="黄色高亮"></button>
+            <button class="hl-dot" data-color="green" style="background:#b2f2bb" title="绿色高亮"></button>
+            <button class="hl-dot" data-color="blue" style="background:#a5d8ff" title="蓝色高亮"></button>
+            <button class="hl-dot" data-color="pink" style="background:#ffc9c9" title="粉色高亮"></button>
+            <button class="hl-dot" data-color="purple" style="background:#d0bfff" title="紫色高亮"></button>
+          </span>
+          <button class="fmt-btn" id="fmt-note" title="给选中文字加批注，双击已有批注可重新编辑">✎ 批注</button>
+          <span class="fmt-sep"></span>
+          <button class="fmt-btn" id="fmt-hl-clear" title="清除选中范围的高亮与批注">✕ 高亮</button>
           <span class="spacer"></span>
-          <span class="status" id="fmt-hint">直接在下方文档上编辑，内容仍以 Markdown 保存</span>
+          <span class="status" id="fmt-hint" title="在下方文档上直接编辑，内容仍以 Markdown 保存"></span>
         </div>
         <div class="editor-body">
           <textarea id="f-content" class="hidden" placeholder="在这里粘贴或输入内容，支持 Markdown"></textarea>
@@ -188,6 +203,27 @@
       <div class="actions">
         <button class="btn" id="s-close">关闭</button>
         <button class="btn primary" id="s-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批注编辑 -->
+  <div id="note-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="note-modal-title">添加批注</h2>
+      <div class="row">
+        <label>选中的文字</label>
+        <div class="quoted" id="note-quote"></div>
+      </div>
+      <div class="row">
+        <label>批注</label>
+        <textarea id="note-text" class="field note-textarea" placeholder="写下你的想法、疑问或待办"></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn danger" id="note-delete">删除批注</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="note-cancel">取消</button>
+        <button class="btn primary" id="note-save">保存</button>
       </div>
     </div>
   </div>

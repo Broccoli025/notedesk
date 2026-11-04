@@ -511,7 +511,8 @@ kbd {
 .nav-item.active .sub { color: rgba(255,255,255,0.75); }
 
 /* 编辑区的文件路径条 */
-.file-row { gap: 8px; }
+.file-row { gap: 8px; flex-wrap: nowrap; overflow: hidden; }
+.file-row .btn { flex: none; }
 .file-path {
   flex: 1;
   min-width: 0;
@@ -524,3 +525,79 @@ kbd {
 /* 目录部分可以被截断，文件名永远完整显示 */
 .file-path .dir { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .file-path .base { flex: none; color: var(--text-2); }
+
+/* ---------- 左栏与中栏折叠 ---------- */
+.app.hide-sidebar { grid-template-columns: 0 300px 1fr; }
+.app.hide-list { grid-template-columns: 200px 0 1fr; }
+.app.hide-sidebar.hide-list { grid-template-columns: 0 0 1fr; }
+.app.hide-sidebar > .sidebar,
+.app.hide-list > .list-pane { border-right: none; }
+
+/* 最左侧的栏要给红绿灯让位 */
+.app.hide-sidebar .list-header { padding-left: 86px; }
+.app.hide-sidebar.hide-list .editor-toolbar { padding-left: 86px; }
+
+.pane-toggles { display: flex; gap: 2px; margin-right: 4px; flex: none; }
+.pane-toggles .fmt-btn { font-size: 13px; color: var(--text-3); }
+.pane-toggles .fmt-btn.on { color: var(--accent); background: var(--bg-active); }
+
+/* ---------- 高亮与批注 ---------- */
+.hl-swatches { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+.hl-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  padding: 0;
+}
+.hl-dot:hover { transform: scale(1.18); }
+
+/* 正文里的高亮。颜色用 CSS 变量，深色模式下压暗一点保证文字可读 */
+.preview mark,
+.preview .nd-hl {
+  --hl: #ffe066;
+  background: var(--hl);
+  color: #1d1d1f;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.preview mark[data-color="green"] { --hl: #b2f2bb; }
+.preview mark[data-color="blue"] { --hl: #a5d8ff; }
+.preview mark[data-color="pink"] { --hl: #ffc9c9; }
+.preview mark[data-color="purple"] { --hl: #d0bfff; }
+
+/* 带批注的高亮：下方虚线 + 一个可点的小铅笔 */
+.preview mark[data-note] {
+  border-bottom: 2px dotted rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+.preview mark[data-note]::after {
+  content: '✎';
+  font-size: 9px;
+  vertical-align: super;
+  margin-left: 1px;
+  opacity: 0.65;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 批注弹窗 */
+.quoted {
+  background: var(--bg-hover);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 90px;
+  overflow-y: auto;
+  color: var(--text-2);
+  user-select: text;
+}
+.note-textarea {
+  width: 100%;
+  height: 110px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
